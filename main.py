@@ -1,5 +1,5 @@
 from argparse import ArgumentParser
-from src import snake
+from src import snake, bipedal_walker
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -14,3 +14,8 @@ if __name__ == "__main__":
             snake.train()
         else:
             raise NotImplementedError
+    elif env == "bipedal_walker":
+        if not is_inference:
+            bipedal_walker.train()
+        else:
+            bipedal_walker.inference()

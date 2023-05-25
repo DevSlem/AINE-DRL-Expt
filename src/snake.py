@@ -1,21 +1,20 @@
 import math
 
 import aine_drl
+import aine_drl.agent as agent
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from aine_drl import Observation, PolicyDist
-from aine_drl.agent import PPO, Agent, PPOConfig, PPOSharedNetwork
-from aine_drl.agent.agent import Agent
 from aine_drl.env import Env, GymEnv
-from aine_drl.factory import AgentFactory, AINETrainFactory
+from aine_drl.factory import (AgentFactory, AINEInferenceFactory,
+                              AINETrainFactory)
 from aine_drl.policy import CategoricalPolicy
 from gym.vector import AsyncVectorEnv
 
-from envs.snake import SnakeEnv
+from src.envs.snake import SnakeEnv
 
 
-class SnakePPONet(nn.Module, PPOSharedNetwork):
+class SnakePPONet(nn.Module, agent.PPOSharedNetwork):
     def __init__(self, img_obs_shape: tuple, num_actions: int) -> None:
         super().__init__()
         
@@ -36,17 +35,15 @@ class SnakePPONet(nn.Module, PPOSharedNetwork):
             nn.Conv2d(64, 64, kernel_size=3, stride=1),
             nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(conv_flattened_features, 512),
-            nn.ReLU(),
         )
         
-        self.actor = CategoricalPolicy(512, num_actions)
-        self.critic = nn.Linear(512, 1)
+        self.actor = CategoricalPolicy(conv_flattened_features, num_actions)
+        self.critic = nn.Linear(conv_flattened_features, 1)
     
     def model(self) -> nn.Module:
         return self
         
-    def forward(self, obs: Observation) -> tuple[PolicyDist, torch.Tensor]:
+    def forward(self, obs: aine_drl.Observation) -> tuple[aine_drl.PolicyDist, torch.Tensor]:
         image_obs = obs.items[0].permute(0, 3, 1, 2)
         encoding = self.encoding_layer(image_obs)
         policy_dist = self.actor(encoding)
@@ -72,9 +69,9 @@ class SnakePPONet(nn.Module, PPOSharedNetwork):
         )
         return h, w
     
-class SnakePPOMaker(AgentFactory):
-    def make(self, env: Env, config_dict: dict) -> Agent:
-        config = PPOConfig(**config_dict)
+class SnakePPOFactory(AgentFactory):
+    def make(self, env: Env, config_dict: dict) -> agent.Agent:
+        config = agent.PPOConfig(**config_dict)
         
         network = SnakePPONet(
             img_obs_shape=env.obs_spaces[0],
@@ -86,7 +83,7 @@ class SnakePPOMaker(AgentFactory):
             lr=3e-4
         )).enable_grad_clip(network.parameters(), max_norm=5.0)
         
-        return PPO(config, network, trainer, env.num_envs)
+        return agent.PPO(config, network, trainer, env.num_envs)
     
 def train():
     aine_factory = AINETrainFactory.from_yaml("config/snake_ppo.yaml")
@@ -94,11 +91,22 @@ def train():
     num_envs = aine_factory.num_envs
     seed = aine_factory.seed
     env = GymEnv(AsyncVectorEnv([
-        lambda: SnakeEnv() for _ in range(num_envs)
+        lambda: SnakeEnv(num_stacked_images=1) for _ in range(num_envs)
     ]), seed=seed)
     
     aine_factory.set_env(env) \
-        .make_agent(SnakePPOMaker()) \
+        .make_agent(SnakePPOFactory()) \
         .ready() \
         .train() \
+        .close()
+
+def inference():
+    aine_factory = AINEInferenceFactory.from_yaml("config/snake_ppo.yaml")
+    
+    env = GymEnv(SnakeEnv(render_mode="human"))
+    
+    aine_factory.set_env(env) \
+        .make_agent(SnakePPOFactory()) \
+        .ready() \
+        .inference() \
         .close()
